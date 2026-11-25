@@ -52,6 +52,7 @@ class MainActivity : ComponentActivity() {
     private var customerPresentation: CustomerPresentation? = null
     private var overlayPromptShown = false
     private var urlDialog: AlertDialog? = null
+    private var autoCustomerUrl: String? = null
 
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -78,7 +79,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
-        mainWebView = createWebView(this)
+        mainWebView = createWebView(this) { url -> onCashierUrlChanged(url) }
         setContentView(mainWebView)
         enterImmersive()
 
@@ -172,7 +173,9 @@ class MainActivity : ComponentActivity() {
         }
 
         val mainField = field(mainUrl())
-        val customerField = field(customerUrl())
+        val customerField = field(customerUrl()).apply {
+            hint = "Blank = the cashier's store second screen"
+        }
         val form = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad / 2, pad, 0)
@@ -180,6 +183,7 @@ class MainActivity : ComponentActivity() {
             addView(mainField)
             addView(label("Customer screen URL (customer_url)"))
             addView(customerField)
+            addView(label("Customer screen now: ${effectiveCustomerUrl().ifBlank { "(black until a store opens)" }}"))
             addView(label("Customer displays found: ${presentationDisplays().size}"))
         }
 
@@ -202,8 +206,22 @@ class MainActivity : ComponentActivity() {
     private fun reloadBothScreens() {
         mainWebView.loadUrl(mainUrl())
         val presentation = customerPresentation
-        if (presentation != null) presentation.load(customerUrl()) else refreshPresentation()
+        if (presentation != null) presentation.load(effectiveCustomerUrl()) else refreshPresentation()
     }
+
+    /**
+     * With customer_url blank, the rear screen follows the cashier: once the main WebView is on
+     * /store/<id>/…, the customer screen loads that store's /store/<id>/second-screen page
+     * (myenterprisex SecondScreenPage, fed by the cashier tab through shared localStorage).
+     */
+    private fun onCashierUrlChanged(url: String) {
+        val derived = secondScreenUrlFor(url) ?: return
+        if (derived == autoCustomerUrl) return
+        autoCustomerUrl = derived
+        if (customerUrl().isBlank()) customerPresentation?.load(derived)
+    }
+
+    private fun effectiveCustomerUrl(): String = customerUrl().ifBlank { autoCustomerUrl.orEmpty() }
 
     // ---------------------------------------------------------------- customer display
 
@@ -286,7 +304,7 @@ class MainActivity : ComponentActivity() {
             webView = view
             setContentView(view)
             window?.let { hideSystemBars(it, view) }
-            load(customerUrl())
+            load(effectiveCustomerUrl())
         }
 
         fun load(url: String) {
@@ -340,7 +358,10 @@ class MainActivity : ComponentActivity() {
     // ---------------------------------------------------------------- WebView setup
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(context: Context): WebView = WebView(context).apply {
+    private fun createWebView(
+        context: Context,
+        onUrlChanged: ((String) -> Unit)? = null,
+    ): WebView = WebView(context).apply {
         layoutParams = ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -373,6 +394,12 @@ class MainActivity : ComponentActivity() {
 
         webChromeClient = WebChromeClient()
         webViewClient = object : WebViewClient() {
+            // Fires for full loads and SPA pushState navigations alike.
+            override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                super.doUpdateVisitedHistory(view, url, isReload)
+                if (url != null) onUrlChanged?.invoke(url)
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
                 return when (uri.scheme?.lowercase()) {
@@ -424,8 +451,19 @@ class MainActivity : ComponentActivity() {
         private const val PREF_OVERLAY_DECLINED = "overlay_prompt_declined"
 
         const val DEFAULT_MAIN_URL = "https://system.caltiger.ai"
-        /** Empty until the POS has a customer-display page; the screen stays black meanwhile. */
+        /** Empty = follow the cashier's store (see [secondScreenUrlFor]). */
         const val DEFAULT_CUSTOMER_URL = ""
+
+        private val STORE_PATH = Regex("^(https?://[^/?#]+)/store/([^/?#]+)")
+
+        /**
+         * "https://system.caltiger.ai/store/abc/pos?x=1" → "https://system.caltiger.ai/store/abc/second-screen".
+         * Null when the cashier isn't inside a store yet (sign-in page, store picker).
+         */
+        fun secondScreenUrlFor(url: String): String? {
+            val m = STORE_PATH.find(url) ?: return null
+            return "${m.groupValues[1]}/store/${m.groupValues[2]}/second-screen"
+        }
 
         private const val HOTSPOT_DP = 80
         private const val HOTSPOT_TAPS = 5

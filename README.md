@@ -6,7 +6,15 @@ A thin Android shell that runs the Ultra POS web app (myenterprisex) on the
 | Screen | Android display | Shows |
 |---|---|---|
 | 10.1" cashier touchscreen | Display 0 | `main_url` (default `https://system.caltiger.ai`) |
-| 4.5" rear customer screen | first `DISPLAY_CATEGORY_PRESENTATION` display | `customer_url` (default: empty, so the screen stays black) |
+| 4.5" rear customer screen | first `DISPLAY_CATEGORY_PRESENTATION` display | `customer_url`; blank (the default) follows the cashier's store |
+
+**Customer screen, automatic:** while `customer_url` is blank and the cashier screen is on
+`/store/<id>/…`, the rear screen loads `/store/<id>/second-screen`. That is the existing
+Ultra POS customer display, `SecondScreenPage`, which shows the cart, the checkout bill, the
+payment and change, and the idle ad. The cashier page feeds it through `localStorage`, which both
+screens share because they run in one app, so it needs no server round-trip. It stays black until
+a store is open, for example on the sign-in page. To force a specific page, type it into the
+customer URL field instead.
 
 No web files are packed into the APK. Both screens load live URLs, so a web deploy
 reaches the terminal without a new APK.
