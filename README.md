@@ -66,6 +66,23 @@ To build locally instead, you need JDK 17 and the Android SDK (platform 34):
 2. Tap the top-left corner 5 times and set the cashier URL and the customer URL.
 3. Optional: in Android settings, set ultrapos to start on boot or pin it (screen pinning or your MDM's kiosk mode).
 
+## Printing (built-in, USB and Bluetooth printers)
+
+Android WebView has no Web Bluetooth or WebUSB, so the browser's printer pickers don't work inside an
+app. ultrapos does the printer I/O itself and gives the cashier page a small bridge
+(`window.UltraPOSNative`). Ultra POS uses it automatically when it runs inside the app, so the store's
+existing **Bluetooth** and **USB** printer settings and every print button keep working.
+
+- **USB and the built-in printer.** In Ultra POS Settings → Printer, choose **USB**, then **Connect**.
+  Pick the printer from the list and allow USB access when Android asks. Android asks again after each
+  reboot, on the first print.
+- **Bluetooth.** First pair the printer in **Android Settings → Bluetooth**. Then in Ultra POS choose
+  **Bluetooth**, then **Connect**, and pick it. The app uses classic Bluetooth (SPP), which most
+  receipt printers use. BLE-only printers are not supported yet.
+- Only pages from the cashier URL's site can use the bridge.
+- If the built-in printer doesn't show in the USB list, it is wired as a serial port, not USB, and
+  needs the terminal maker's printer SDK. Tell us the model.
+
 ## Troubleshooting
 
 - **The customer screen mirrors the cashier screen.** The app found no presentation display. The URL
@@ -83,4 +100,5 @@ settings.gradle.kts, build.gradle.kts             AGP 8.5.2, Kotlin 1.9.24, Grad
 app/build.gradle.kts                              minSdk 30, target/compile 34
 app/src/main/AndroidManifest.xml
 app/src/main/java/com/pos/dualscreen/MainActivity.kt
+app/src/main/java/com/pos/dualscreen/NativePrinterBridge.kt   USB + Bluetooth printing for the page
 ```

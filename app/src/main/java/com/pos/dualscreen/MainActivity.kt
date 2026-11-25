@@ -48,6 +48,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 class MainActivity : ComponentActivity() {
 
     private lateinit var mainWebView: WebView
+    private var printerBridge: NativePrinterBridge? = null
     private lateinit var displayManager: DisplayManager
     private var customerPresentation: CustomerPresentation? = null
     private var overlayPromptShown = false
@@ -80,6 +81,8 @@ class MainActivity : ComponentActivity() {
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
         mainWebView = createWebView(this) { url -> onCashierUrlChanged(url) }
+        // Bluetooth/USB receipt printing (WebView has no Web Bluetooth or WebUSB).
+        printerBridge = NativePrinterBridge(this) { mainUrl() }.also { it.attach(mainWebView) }
         setContentView(mainWebView)
         enterImmersive()
 
@@ -131,6 +134,8 @@ class MainActivity : ComponentActivity() {
         urlDialog?.dismiss()
         urlDialog = null
         dismissPresentation()
+        printerBridge?.destroy()
+        printerBridge = null
         destroyWebView(mainWebView)
         super.onDestroy()
     }
