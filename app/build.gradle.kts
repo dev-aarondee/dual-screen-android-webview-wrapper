@@ -11,13 +11,29 @@ android {
         applicationId = "com.pos.dualscreen"
         minSdk = 30 // Android 11 (OJ-D3 ships Android 11–14)
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
+    }
+
+    // One fixed key (GitHub secrets → env in CI) so every build installs over the last one.
+    // Without SIGNING_KEYSTORE_FILE, local builds fall back to the machine's debug key.
+    val keystoreFile = System.getenv("SIGNING_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+    val shared = keystoreFile?.let {
+        signingConfigs.create("shared") {
+            storeFile = it
+            storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+            keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+            keyPassword = System.getenv("SIGNING_STORE_PASSWORD")
+        }
     }
 
     buildTypes {
+        debug {
+            if (shared != null) signingConfig = shared
+        }
         release {
             isMinifyEnabled = false
+            if (shared != null) signingConfig = shared
         }
     }
 
