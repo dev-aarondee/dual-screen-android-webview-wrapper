@@ -11,8 +11,8 @@ android {
         applicationId = "com.pos.dualscreen"
         minSdk = 30 // Android 11 (OJ-D3 ships Android 11–14)
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     buildTypes {

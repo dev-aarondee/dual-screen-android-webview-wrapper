@@ -62,9 +62,9 @@ To build locally instead, you need JDK 17 and the Android SDK (platform 34):
 2. Open it with the Files app. Allow **Install unknown apps** for that app when asked, then tap **Install**.
 
 **First run**
-1. Open **Ultra POS**. When asked, tap **Open settings** and turn on **Display over other apps**, then go back.
+1. Open **Ultra POS Display**. When asked, tap **Open settings** and turn on **Display over other apps**, then go back.
 2. Tap the top-left corner 5 times and set the cashier URL and the customer URL.
-3. Optional: in Android settings, set Ultra POS to start on boot or pin it (screen pinning or your MDM's kiosk mode).
+3. Optional: in Android settings, set Ultra POS Display to start on boot or pin it (screen pinning or your MDM's kiosk mode).
 
 ## Troubleshooting
 
