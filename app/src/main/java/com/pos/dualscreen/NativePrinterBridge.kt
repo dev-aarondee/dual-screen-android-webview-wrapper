@@ -278,11 +278,16 @@ class NativePrinterBridge(
     /** io thread */
     private fun writeUsb(key: String, link: UsbLink, bytes: ByteArray, done: Reply) {
         for ((start, end) in PrinterKeys.chunks(bytes.size, USB_CHUNK)) {
-            val sent = link.connection.bulkTransfer(link.endpoint, bytes, start, end - start, USB_TIMEOUT_MS)
-            if (sent < 0) {
-                link.close()
-                usbLinks.remove(key)
-                return done.fail("unreachable", "The USB printer stopped answering. Check it's on and has paper.")
+            // A printer may take only part of a chunk at once: keep sending the rest.
+            var at = start
+            while (at < end) {
+                val sent = link.connection.bulkTransfer(link.endpoint, bytes, at, end - at, USB_TIMEOUT_MS)
+                if (sent <= 0) {
+                    link.close()
+                    usbLinks.remove(key)
+                    return done.fail("unreachable", "The USB printer stopped answering. Check it's on and has paper.")
+                }
+                at += sent
             }
         }
         done.ok(JSONObject())
