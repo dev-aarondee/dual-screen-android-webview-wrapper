@@ -62,14 +62,14 @@ To build locally instead, you need JDK 17 and the Android SDK (platform 34):
 2. Open it with the Files app. Allow **Install unknown apps** for that app when asked, then tap **Install**.
 
 **First run**
-1. Open **ultrapos**. When asked, tap **Open settings** and turn on **Display over other apps**, then go back.
+1. Open **Ultra POS**. When asked, tap **Open settings** and turn on **Display over other apps**, then go back.
 2. Tap the top-left corner 5 times and set the cashier URL and the customer URL.
-3. Optional: in Android settings, set ultrapos to start on boot or pin it (screen pinning or your MDM's kiosk mode).
+3. Optional: in Android settings, set Ultra POS to start on boot or pin it (screen pinning or your MDM's kiosk mode).
 
 ## Printing (built-in, USB and Bluetooth printers)
 
 Android WebView has no Web Bluetooth or WebUSB, so the browser's printer pickers don't work inside an
-app. ultrapos does the printer I/O itself and gives the cashier page a small bridge
+app. Ultra POS does the printer I/O itself and gives the cashier page a small bridge
 (`window.UltraPOSNative`). Ultra POS uses it automatically when it runs inside the app, so the store's
 existing **Bluetooth** and **USB** printer settings and every print button keep working.
 
