@@ -32,6 +32,18 @@ class BridgeError extends Error {
 const SERIAL = /^(COM\d+|\/dev\/.+)$/i;
 const isSerial = (address) => SERIAL.test(String(address || ''));
 
+// Windows' built-in "printers" that save files or send faxes; a receipt never goes there.
+const VIRTUAL = /^(microsoft print to pdf|microsoft xps document writer|onenote|send to onenote|fax)\b/i;
+const isVirtualPrinter = (p) => VIRTUAL.test(String(p.displayName || p.name || '').trim());
+
+function portOption(p) {
+  if (p.kind === 'bluetooth') {
+    return { id: p.path, label: p.device ? `${p.device} (${p.path})` : p.name || p.path, detail: `Bluetooth printer · ${p.path}` };
+  }
+  if (p.kind === 'serial') return { id: p.path, label: p.name || p.path, detail: `Cable serial port ${p.path} (not Bluetooth)` };
+  return { id: p.path, label: p.name || p.path, detail: `Bluetooth / serial port ${p.path}` };
+}
+
 /**
  * backend: {
  *   listPrinters(): Promise<[{name, displayName?, isDefault?}]>,
@@ -60,7 +72,7 @@ function createBridge(backend, { version = '0.0.0', platform = process.platform 
   const printerLabel = (p) => p.displayName || p.name;
 
   async function usbConnect(args) {
-    const printers = await backend.listPrinters();
+    const printers = (await backend.listPrinters()).filter((p) => !isVirtualPrinter(p));
     const key = typeof args.key === 'string' ? args.key : '';
     if (key) {
       const found = printers.find((p) => p.name === key);
@@ -88,8 +100,8 @@ function createBridge(backend, { version = '0.0.0', platform = process.platform 
       backend.listPrinters().catch(() => []),
     ]);
     const options = [
-      ...ports.map((p) => ({ id: p.path, label: p.name || p.path, detail: `Bluetooth / serial port ${p.path}` })),
-      ...printers.map((p) => ({ id: p.name, label: printerLabel(p), detail: 'Installed printer' })),
+      ...ports.map(portOption),
+      ...printers.filter((p) => !isVirtualPrinter(p)).map((p) => ({ id: p.name, label: printerLabel(p), detail: 'Installed printer' })),
     ];
     const address = typeof args.address === 'string' ? args.address : '';
     if (address) {

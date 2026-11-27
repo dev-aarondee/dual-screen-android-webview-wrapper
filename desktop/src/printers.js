@@ -53,7 +53,22 @@ public static class UltraPosRawPrint {
 
 const LIST_COM_PS1 = String.raw`
 $ErrorActionPreference = 'SilentlyContinue'
-Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match '\((COM\d+)\)' } | ForEach-Object { $_.Name }
+# One line per COM port: name <TAB> device id <TAB> Bluetooth address <TAB> paired device's name.
+# A paired Bluetooth printer gets two ports: the outgoing one carries the printer's address,
+# the incoming one carries 000000000000 and never reaches the printer.
+$all = @(Get-CimInstance Win32_PnPEntity)
+$devices = 'HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices'
+foreach ($p in $all) {
+  if ([string]$p.Name -notmatch '\((COM\d+)\)') { continue }
+  $id = [string]$p.PNPDeviceID; $bt = ''; $dev = ''
+  if ($id -match '^BTHENUM\\' -and $id -match '&([0-9A-Fa-f]{12})_') { $bt = $Matches[1].ToUpper() }
+  if ($bt -and $bt -ne '000000000000') {
+    $raw = (Get-ItemProperty -Path ("$devices\" + $bt.ToLower()) -Name Name).Name
+    if ($raw) { $dev = [Text.Encoding]::UTF8.GetString([byte[]]$raw).Trim([char]0).Trim() }
+    if (-not $dev) { $d = $all | Where-Object { [string]$_.PNPDeviceID -like "BTHENUM\DEV_$bt*" } | Select-Object -First 1; if ($d) { $dev = [string]$d.Name } }
+  }
+  @([string]$p.Name, $id, $bt, $dev) -join [char]9
+}
 `;
 
 function run(cmd, args, timeoutMs) {
@@ -105,19 +120,31 @@ async function rawPrint(printerName, bytes) {
   }
 }
 
-/** Parses "Standard Serial over Bluetooth link (COM5)" lines. */
+/**
+ * Parses list-com.ps1 lines: "name\tdeviceId\tbtAddress\tdeviceName" (older one-column lines work too).
+ * Each port gets kind: 'bluetooth' (sends to a paired device), 'bluetooth-incoming' (only listens,
+ * never reaches a printer, so it is left out) or 'serial' (a cable port such as COM1).
+ * Bluetooth ports come first.
+ */
 function parseComPorts(text) {
   const seen = new Set();
   const ports = [];
   for (const line of String(text).split(/\r?\n/)) {
-    const m = /\((COM\d+)\)/i.exec(line);
+    const [name = '', id = '', bt = '', device = ''] = line.split('\t').map((s) => s.trim());
+    const m = /\((COM\d+)\)/i.exec(name);
     if (!m) continue;
     const p = m[1].toUpperCase();
     if (seen.has(p)) continue;
     seen.add(p);
-    ports.push({ path: p, name: line.trim() });
+    const bluetooth = /^BTHENUM\\/i.test(id) || /bluetooth/i.test(name);
+    let kind = bluetooth ? 'bluetooth' : 'serial';
+    if (bluetooth && /^0{12}$/.test(bt)) kind = 'bluetooth-incoming';
+    const port = { path: p, name, kind };
+    if (device) port.device = device;
+    ports.push(port);
   }
-  return ports;
+  const rank = { bluetooth: 0, serial: 1, 'bluetooth-incoming': 2 };
+  return ports.filter((x) => x.kind !== 'bluetooth-incoming').sort((a, b) => rank[a.kind] - rank[b.kind]);
 }
 
 async function listSerialPorts() {
@@ -131,15 +158,27 @@ async function listSerialPorts() {
   }
 }
 
-function serialWrite(port, bytes) {
-  // Opening a Bluetooth COM port makes Windows connect to the printer.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function serialWrite(port, bytes, { settleMs = 1500 } = {}) {
+  // Opening a Bluetooth COM port makes Windows connect to the printer. Keep the port open
+  // a moment after writing: closing it at once can drop the link before the bytes go out.
   const target = IS_WIN ? `\\\\.\\${port}` : port;
-  return new Promise((resolve, reject) => {
-    fs.writeFile(target, bytes, (err) => {
-      if (err) reject(new Error(`Couldn't reach the printer on ${port}. Check it is on and paired. (${err.code || err.message})`));
-      else resolve();
-    });
-  });
+  let fh;
+  try {
+    fh = await fs.promises.open(target, 'r+');
+    let off = 0;
+    while (off < bytes.length) {
+      const { bytesWritten } = await fh.write(bytes, off, bytes.length - off);
+      if (!bytesWritten) throw new Error('the port took no data');
+      off += bytesWritten;
+    }
+    await sleep(settleMs);
+  } catch (err) {
+    throw new Error(`Couldn't reach the printer on ${port}. Check it is on and paired. (${err.code || err.message})`);
+  } finally {
+    if (fh) await fh.close().catch(() => {});
+  }
 }
 
 /** getPrinters: () => Promise<Electron.PrinterInfo[]> from a webContents. */
@@ -156,4 +195,4 @@ function createBackend({ getPrinters, pick }) {
   };
 }
 
-module.exports = { createBackend, parseComPorts, RAW_PRINT_PS1 };
+module.exports = { createBackend, parseComPorts, serialWrite, RAW_PRINT_PS1, LIST_COM_PS1 };

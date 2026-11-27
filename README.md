@@ -106,7 +106,9 @@ because the installer isn't code-signed yet: click **More info → Run anyway**.
 - Printing uses the same `window.UltraPOSNative` bridge. In the POS, the **USB** method lists the
   printers installed in Windows and sends receipts through the printer's own driver, so the
   driver stays and other apps can still print. The **Bluetooth** method lists paired Bluetooth
-  printers (their COM port) and installed printers. Never replace the printer's driver (for
+  printers by name ("GLPrinter (COM3)") and installed printers. Windows gives each paired printer
+  two COM ports; only the outgoing one is listed, since the incoming one never reaches the printer.
+  The "Driver is unavailable" printer Windows adds for it is not needed. Never replace the printer's driver (for
   example with Zadig).
 - Build: push a change under `desktop/` and the **Build Windows app** workflow uploads the
   `ultrapos-windows` artifact. Local run: `cd desktop && npm install && npm start`; tests:

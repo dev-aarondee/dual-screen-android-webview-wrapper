@@ -16,4 +16,8 @@ test('listing COM ports works on Windows', { skip: !onWindows }, async () => {
   const be = createBackend({ getPrinters: async () => [], pick: async () => null });
   const ports = await be.listSerialPorts();
   assert.ok(Array.isArray(ports));
+  for (const p of ports) {
+    assert.match(p.path, /^COM\d+$/);
+    assert.ok(['bluetooth', 'serial'].includes(p.kind), JSON.stringify(p));
+  }
 });
