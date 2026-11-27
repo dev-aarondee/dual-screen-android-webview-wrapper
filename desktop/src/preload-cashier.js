@@ -6,6 +6,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('UltraPOSNative', {
+  // Read synchronously by the web app (src/lib/terminalApp.ts) so its help
+  // gives Windows steps here, not the Android app's.
+  desktop: true,
+  platform: process.platform,
   call(id, method, argsJson) {
     ipcRenderer.send('native-call', String(id), String(method), argsJson == null ? '' : String(argsJson));
   },
