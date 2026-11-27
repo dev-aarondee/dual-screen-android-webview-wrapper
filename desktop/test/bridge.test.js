@@ -5,7 +5,7 @@ const { createBridge, isSerial } = require('../src/bridge');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { parseComPorts, serialWrite, RAW_PRINT_PS1, LIST_COM_PS1 } = require('../src/printers');
+const { parseComPorts, parseUsbDirect, serialWrite, RAW_PRINT_PS1, LIST_COM_PS1, USB_DIRECT_PS1 } = require('../src/printers');
 
 function fakeBackend(over = {}) {
   const jobs = [];
@@ -191,4 +191,45 @@ test('serial write sends every byte before closing the port', async () => {
   await serialWrite(f, Buffer.from('\x1b@receipt\n'), { settleMs: 5 });
   assert.equal(fs.readFileSync(f, 'utf8'), '\x1b@receipt\n');
   await assert.rejects(serialWrite(f + '-missing', Buffer.from('x'), { settleMs: 5 }), /Couldn't reach the printer/);
+});
+
+const USB_LIST = [
+  '\\\\?\\usb#vid_0416&pid_5011#5&1a2b3c&0&3#{28d78fad-5a12-11d1-ae5b-0000f803a8c2}\tUSB\\VID_0416&PID_5011\\5&1A2B3C&0&3\tPOS58 Printer\tVID_0416&PID_5011',
+  '\\\\?\\usb#vid_0416&pid_5011#5&9f9f9f&0&4#{28d78fad-5a12-11d1-ae5b-0000f803a8c2}\tUSB\\VID_0416&PID_5011\\5&9F9F9F&0&4\t\tVID_0416&PID_5011',
+  'garbage line',
+].join('\r\n');
+
+test('USB printers reached directly get a key that survives changing USB sockets', () => {
+  assert.deepEqual(parseUsbDirect(USB_LIST).map((p) => [p.key, p.name]), [
+    ['usb:VID_0416&PID_5011', 'POS58 Printer'],
+    ['usb:VID_0416&PID_5011#2', 'USB receipt printer'],
+  ]);
+});
+
+test('usb.connect offers a driverless USB printer and usb.write sends to it directly', async () => {
+  const direct = [];
+  const be = fakeBackend({
+    async listPrinters() { return [{ name: 'Microsoft Print to PDF' }, { name: 'GLPrinter' }]; },
+    async listUsbDirect() { return parseUsbDirect(USB_LIST); },
+    async usbDirectWrite(key, bytes) { direct.push([key, Buffer.from(bytes).toString()]); },
+  });
+  be.pickAnswer = 'usb:VID_0416&PID_5011';
+  const bridge = createBridge(be);
+  const c = parse(await bridge.call('usb.connect', '{}'));
+  assert.deepEqual(c, { ok: true, key: 'usb:VID_0416&PID_5011', name: 'POS58 Printer', opened: true });
+  assert.deepEqual(be.picks[0].items.map((i) => i.id), ['GLPrinter', 'usb:VID_0416&PID_5011', 'usb:VID_0416&PID_5011#2']);
+  assert.match(be.picks[0].items[1].detail, /no driver needed/);
+  // reconnect without a prompt (app start) finds it again
+  assert.equal(parse(await bridge.call('usb.connect', JSON.stringify({ key: 'usb:VID_0416&PID_5011', prompt: false }))).ok, true);
+  await bridge.call('usb.write', JSON.stringify({ key: 'usb:VID_0416&PID_5011', data: b64('\x1b@hi') }));
+  assert.deepEqual(direct, [['usb:VID_0416&PID_5011', '\x1b@hi']]);
+  assert.deepEqual(be.jobs, []);
+  const gone = parse(await createBridge(fakeBackend({ async listUsbDirect() { return []; } })).call('usb.connect', JSON.stringify({ key: 'usb:VID_0416&PID_5011', prompt: false })));
+  assert.equal(gone.code, 'unreachable');
+  assert.match(gone.message, /plugged in/);
+});
+
+test('direct USB uses Windows\' own USB printing port and never touches drivers', () => {
+  assert.match(USB_DIRECT_PS1, /28d78fad-5a12-11d1-ae5b-0000f803a8c2/);
+  assert.doesNotMatch(USB_DIRECT_PS1, /pnputil|zadig|winusb|libusb|UpdateDriver|DiInstall/i);
 });

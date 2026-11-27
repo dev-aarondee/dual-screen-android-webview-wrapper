@@ -21,3 +21,10 @@ test('listing COM ports works on Windows', { skip: !onWindows }, async () => {
     assert.ok(['bluetooth', 'serial'].includes(p.kind), JSON.stringify(p));
   }
 });
+
+test('the direct USB script compiles and lists on Windows', { skip: !onWindows }, async () => {
+  const be = createBackend({ getPrinters: async () => [], pick: async () => null });
+  const list = await be.listUsbDirect();
+  assert.ok(Array.isArray(list));
+  await assert.rejects(be.usbDirectWrite('usb:VID_FFFF&PID_FFFF', Buffer.from('x')), /plugged in/);
+});

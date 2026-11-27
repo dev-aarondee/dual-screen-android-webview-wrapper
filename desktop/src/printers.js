@@ -3,7 +3,8 @@
  * Talks to the printers this computer already has. Nothing here replaces or
  * changes a printer driver: on Windows, receipts go through the driver's own
  * print queue (winspool, datatype RAW), the same way POS software has always
- * printed ESC/POS to a thermal printer.
+ * printed ESC/POS to a thermal printer. A USB receipt printer with no Windows driver is
+ * reached through Windows' own USB printing port (usbprint), again without touching drivers.
  */
 const { execFile } = require('child_process');
 const fs = require('fs');
@@ -49,6 +50,88 @@ public static class UltraPosRawPrint {
 }
 "@
 [UltraPosRawPrint]::Send($Printer, [System.IO.File]::ReadAllBytes($File))
+`;
+
+// USB receipt printers through Windows' own USB printing port (usbprint.sys, interface
+// {28d78fad-5a12-11d1-ae5b-0000f803a8c2}). Works when Windows has no driver for the printer
+// ("Driver is unavailable") and never installs or replaces one.
+//   -Mode list  → one line per printer: devicePath <TAB> instanceId <TAB> name <TAB> VID_xxxx&PID_xxxx
+//   -Mode send -Path <devicePath> -File <bytes file>
+const USB_DIRECT_PS1 = String.raw`
+param([string]$Mode = 'list', [string]$Path = '', [string]$File = '')
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class UltraPosUsb {
+  [StructLayout(LayoutKind.Sequential)] struct IfData { public int cbSize; public Guid g; public int flags; public IntPtr r; }
+  [StructLayout(LayoutKind.Sequential)] struct DevData { public int cbSize; public Guid g; public int inst; public IntPtr r; }
+  [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr SetupDiGetClassDevs(ref Guid g, IntPtr e, IntPtr h, int flags);
+  [DllImport("setupapi.dll", SetLastError = true)] static extern bool SetupDiEnumDeviceInterfaces(IntPtr s, IntPtr d, ref Guid g, int i, ref IfData data);
+  [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupDiGetDeviceInterfaceDetail(IntPtr s, ref IfData d, IntPtr detail, int size, out int req, ref DevData info);
+  [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool SetupDiGetDeviceInstanceId(IntPtr s, ref DevData info, StringBuilder id, int size, out int req);
+  [DllImport("setupapi.dll")] static extern bool SetupDiDestroyDeviceInfoList(IntPtr s);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern SafeFileHandle CreateFile(string n, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr t);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool WriteFile(SafeFileHandle h, byte[] b, int n, out int written, IntPtr o);
+  public static List<string> List() {
+    Guid guid = new Guid("28d78fad-5a12-11d1-ae5b-0000f803a8c2");
+    List<string> found = new List<string>();
+    IntPtr set = SetupDiGetClassDevs(ref guid, IntPtr.Zero, IntPtr.Zero, 0x12);
+    if (set == new IntPtr(-1)) return found;
+    try {
+      for (int i = 0; ; i++) {
+        IfData d = new IfData(); d.cbSize = Marshal.SizeOf(d);
+        if (!SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref guid, i, ref d)) break;
+        DevData info = new DevData(); info.cbSize = Marshal.SizeOf(info);
+        int req;
+        SetupDiGetDeviceInterfaceDetail(set, ref d, IntPtr.Zero, 0, out req, ref info);
+        if (req <= 0) continue;
+        IntPtr buf = Marshal.AllocHGlobal(req);
+        try {
+          Marshal.WriteInt32(buf, IntPtr.Size == 8 ? 8 : 6);
+          if (!SetupDiGetDeviceInterfaceDetail(set, ref d, buf, req, out req, ref info)) continue;
+          string devicePath = Marshal.PtrToStringUni(new IntPtr(buf.ToInt64() + 4));
+          StringBuilder id = new StringBuilder(512);
+          SetupDiGetDeviceInstanceId(set, ref info, id, 512, out req);
+          found.Add(devicePath + "\t" + id.ToString());
+        } finally { Marshal.FreeHGlobal(buf); }
+      }
+    } finally { SetupDiDestroyDeviceInfoList(set); }
+    return found;
+  }
+  public static void Send(string devicePath, byte[] bytes) {
+    // GENERIC_WRITE, share read+write, OPEN_EXISTING
+    using (SafeFileHandle h = CreateFile(devicePath, 0x40000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+      if (h.IsInvalid) throw new Exception("Can't open the USB printer (Windows error " + Marshal.GetLastWin32Error() + ")");
+      int off = 0;
+      while (off < bytes.Length) {
+        int n = Math.Min(4096, bytes.Length - off);
+        byte[] chunk = new byte[n];
+        Array.Copy(bytes, off, chunk, 0, n);
+        int written;
+        if (!WriteFile(h, chunk, n, out written, IntPtr.Zero)) throw new Exception("The USB printer stopped taking data (Windows error " + Marshal.GetLastWin32Error() + ")");
+        if (written <= 0) throw new Exception("The USB printer took no data");
+        off += written;
+      }
+    }
+  }
+}
+"@
+if ($Mode -eq 'send') { [UltraPosUsb]::Send($Path, [System.IO.File]::ReadAllBytes($File)); exit 0 }
+foreach ($line in [UltraPosUsb]::List()) {
+  $parts = $line -split "\t", 2
+  $id = $parts[1]; $name = ''; $vidpid = ''
+  $ids = @($id)
+  try { $parent = (Get-PnpDeviceProperty -InstanceId $id -KeyName 'DEVPKEY_Device_Parent').Data; if ($parent) { $ids += $parent } } catch {}
+  foreach ($x in $ids) {
+    if (-not $vidpid -and $x -match '(VID_[0-9A-Fa-f]{4}&PID_[0-9A-Fa-f]{4})') { $vidpid = $Matches[1].ToUpper() }
+    if (-not $name) { try { $name = [string](Get-PnpDeviceProperty -InstanceId $x -KeyName 'DEVPKEY_Device_BusReportedDeviceDesc').Data } catch {} }
+  }
+  @($parts[0], $id, $name.Trim(), $vidpid) -join [char]9
+}
 `;
 
 const LIST_COM_PS1 = String.raw`
@@ -158,6 +241,49 @@ async function listSerialPorts() {
   }
 }
 
+/**
+ * Parses USB_DIRECT_PS1 list lines into [{key, path, name, vidpid}]. The key is what the POS
+ * saves: "usb:VID_0416&PID_5011" (plus "#2" for a second identical printer), so it survives
+ * the printer being plugged into another USB socket, which changes the device path.
+ */
+function parseUsbDirect(text) {
+  const out = [];
+  const count = {};
+  for (const line of String(text).split(/\r?\n/)) {
+    const [devicePath = '', , name = '', vidpid = ''] = line.split('\t').map((s) => s.trim());
+    if (!/^\\\\\?\\/.test(devicePath)) continue;
+    const base = `usb:${vidpid || 'printer'}`;
+    count[base] = (count[base] || 0) + 1;
+    const key = count[base] > 1 ? `${base}#${count[base]}` : base;
+    out.push({ key, path: devicePath, name: name || 'USB receipt printer', vidpid });
+  }
+  return out;
+}
+
+async function listUsbDirect() {
+  if (!IS_WIN) return [];
+  return parseUsbDirect(await powershell('usb-direct.ps1', USB_DIRECT_PS1, ['-Mode', 'list'], 30_000));
+}
+
+let usbCache = [];
+async function usbDirectWrite(key, bytes) {
+  let hit = usbCache.find((p) => p.key === key);
+  if (!hit) {
+    usbCache = await listUsbDirect();
+    hit = usbCache.find((p) => p.key === key);
+  }
+  if (!hit) throw new Error('The USB printer isn\'t plugged in. Check the cable and that it is on.');
+  const file = tempJobFile(bytes);
+  try {
+    await powershell('usb-direct.ps1', USB_DIRECT_PS1, ['-Mode', 'send', '-Path', hit.path, '-File', file], 60_000);
+  } catch (e) {
+    usbCache = []; // re-find it next time (unplugged, or moved to another socket)
+    throw new Error(`Couldn't print to the USB printer: ${e.message}`);
+  } finally {
+    fs.rm(file, { force: true }, () => {});
+  }
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function serialWrite(port, bytes, { settleMs = 1500 } = {}) {
@@ -189,10 +315,12 @@ function createBackend({ getPrinters, pick }) {
       return list.map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: !!p.isDefault }));
     },
     listSerialPorts,
+    listUsbDirect,
+    usbDirectWrite,
     rawPrint,
     serialWrite,
     pick,
   };
 }
 
-module.exports = { createBackend, parseComPorts, serialWrite, RAW_PRINT_PS1, LIST_COM_PS1 };
+module.exports = { createBackend, parseComPorts, parseUsbDirect, serialWrite, RAW_PRINT_PS1, LIST_COM_PS1, USB_DIRECT_PS1 };

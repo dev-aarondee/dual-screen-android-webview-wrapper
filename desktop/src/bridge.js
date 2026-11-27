@@ -3,7 +3,9 @@
  * The same `UltraPOSNative` protocol as the Android app (NativePrinterBridge.kt), so the
  * web app's printer code works unchanged. On a PC:
  *
- *  - "usb" printers are the printers installed in Windows (Settings → Printers). Receipts
+ *  - "usb" printers are the printers installed in Windows (Settings → Printers), plus USB
+ *    receipt printers reached directly through Windows' USB printing port (`key` = "usb:VID_…&PID_…"),
+ *    which work even when Windows says "Driver is unavailable". Installed-printer receipts
  *    are sent as raw ESC/POS through the printer's own Windows driver, so the driver stays
  *    and every other app can still use the printer. `key` = the Windows printer name.
  *  - "bluetooth" printers are paired Bluetooth printers. Windows shows them either as a
@@ -31,6 +33,7 @@ class BridgeError extends Error {
 
 const SERIAL = /^(COM\d+|\/dev\/.+)$/i;
 const isSerial = (address) => SERIAL.test(String(address || ''));
+const isUsbDirect = (key) => /^usb:/i.test(String(key || ''));
 
 // Windows' built-in "printers" that save files or send faxes; a receipt never goes there.
 const VIRTUAL = /^(microsoft print to pdf|microsoft xps document writer|onenote|send to onenote|fax)\b/i;
@@ -48,6 +51,8 @@ function portOption(p) {
  * backend: {
  *   listPrinters(): Promise<[{name, displayName?, isDefault?}]>,
  *   listSerialPorts(): Promise<[{path, name}]>,
+ *   listUsbDirect?(): Promise<[{key, path, name}]>,     // USB printers reached without a driver
+ *   usbDirectWrite?(key, buffer): Promise<void>,
  *   rawPrint(printerName, buffer): Promise<void>,
  *   serialWrite(path, buffer): Promise<void>,
  *   pick(title, items: [{id, label, detail?}]): Promise<string|null>,   // the chosen id, null = cancelled
@@ -72,26 +77,31 @@ function createBridge(backend, { version = '0.0.0', platform = process.platform 
   const printerLabel = (p) => p.displayName || p.name;
 
   async function usbConnect(args) {
-    const printers = (await backend.listPrinters()).filter((p) => !isVirtualPrinter(p));
+    const [printers, direct] = await Promise.all([
+      backend.listPrinters().then((l) => l.filter((p) => !isVirtualPrinter(p))),
+      backend.listUsbDirect ? backend.listUsbDirect().catch(() => []) : [],
+    ]);
+    const options = [
+      ...printers.map((p) => ({ id: p.name, label: printerLabel(p), detail: p.isDefault ? 'Windows default printer' : 'Installed printer' })),
+      ...direct.map((p) => ({ id: p.key, label: p.name, detail: 'USB cable, printed directly (no driver needed)' })),
+    ];
     const key = typeof args.key === 'string' ? args.key : '';
     if (key) {
-      const found = printers.find((p) => p.name === key);
-      if (found) return { key: found.name, name: printerLabel(found), opened: true };
+      const found = options.find((o) => o.id === key);
+      if (found) return { key, name: found.label, opened: true };
       if (args.prompt === false) {
-        throw new BridgeError('unreachable', `The printer "${key}" isn't installed on this computer any more.`);
+        throw new BridgeError('unreachable', isUsbDirect(key)
+          ? 'The USB printer isn\'t plugged in. Check the cable and that it is on.'
+          : `The printer "${key}" isn't installed on this computer any more.`);
       }
     }
-    if (!printers.length) {
-      throw new BridgeError('no-endpoint', 'No printers are installed on this computer. Install the receipt printer\'s Windows driver first, then try again.');
+    if (!options.length) {
+      throw new BridgeError('no-endpoint', 'No receipt printer found. Plug the printer\'s USB cable into this computer and turn it on, then try again.');
     }
-    const id = await backend.pick('Choose the receipt printer', printers.map((p) => ({
-      id: p.name,
-      label: printerLabel(p),
-      detail: p.isDefault ? 'Windows default printer' : '',
-    })));
+    const id = await backend.pick('Choose the receipt printer', options);
     if (!id) throw new BridgeError('cancelled', 'No printer was chosen.');
-    const chosen = printers.find((p) => p.name === id);
-    return { key: id, name: chosen ? printerLabel(chosen) : id, opened: true };
+    const chosen = options.find((o) => o.id === id);
+    return { key: id, name: chosen ? chosen.label : id, opened: true };
   }
 
   async function btConnect(args) {
@@ -123,7 +133,14 @@ function createBridge(backend, { version = '0.0.0', platform = process.platform 
   async function write(target, args) {
     if (!target) throw new BridgeError('unreachable', 'No printer chosen yet.');
     const bytes = decode(args);
-    await serial(() => (isSerial(target) ? backend.serialWrite(target, bytes) : backend.rawPrint(target, bytes)));
+    await serial(() => {
+      if (isSerial(target)) return backend.serialWrite(target, bytes);
+      if (isUsbDirect(target)) {
+        if (!backend.usbDirectWrite) throw new BridgeError('unreachable', 'Direct USB printing isn\'t available here.');
+        return backend.usbDirectWrite(target, bytes);
+      }
+      return backend.rawPrint(target, bytes);
+    });
     return {};
   }
 

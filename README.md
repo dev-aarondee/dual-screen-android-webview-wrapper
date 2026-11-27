@@ -105,7 +105,9 @@ because the installer isn't code-signed yet: click **More info → Run anyway**.
   receipt contents or anything staff type.
 - Printing uses the same `window.UltraPOSNative` bridge. In the POS, the **USB** method lists the
   printers installed in Windows and sends receipts through the printer's own driver, so the
-  driver stays and other apps can still print. The **Bluetooth** method lists paired Bluetooth
+  driver stays and other apps can still print. A USB receipt printer that Windows has no driver for ("Driver is
+  unavailable") is listed too, as *USB cable, printed directly*: receipts go straight to Windows'
+  own USB printing port, again without installing or replacing any driver. The **Bluetooth** method lists paired Bluetooth
   printers by name ("GLPrinter (COM3)") and installed printers. Windows gives each paired printer
   two COM ports; only the outgoing one is listed, since the incoming one never reaches the printer.
   The "Driver is unavailable" printer Windows adds for it is not needed. Never replace the printer's driver (for
