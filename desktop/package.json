@@ -1,7 +1,7 @@
 {
   "name": "ultrapos-desktop",
   "productName": "Ultra POS",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Ultra POS for Windows: the cashier screen, the customer display on a second monitor, and receipt printing through the printer's own Windows driver.",
   "main": "src/main.js",
   "private": true,

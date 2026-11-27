@@ -100,6 +100,9 @@ because the installer isn't code-signed yet: click **More info → Run anyway**.
 - Tap or click the top-left corner 5 times, or press **Ctrl+Shift+U**, for **Screen URLs**,
   *Open when this computer starts*, full screen and **Quit**. Keys: **F11** full screen,
   **F5** reload.
+- A log of failed loads, page crashes and print errors is kept at
+  `%APPDATA%\Ultra POS\logs\ultrapos.log` (Screen URLs → **Open log folder**). It never holds
+  receipt contents or anything staff type.
 - Printing uses the same `window.UltraPOSNative` bridge. In the POS, the **USB** method lists the
   printers installed in Windows and sends receipts through the printer's own driver, so the
   driver stays and other apps can still print. The **Bluetooth** method lists paired Bluetooth

@@ -3,7 +3,7 @@
 // a website.
 const { contextBridge, ipcRenderer } = require('electron');
 
-const CHANNELS = new Set(['settings:get', 'settings:save', 'settings:reload', 'settings:quit', 'picker:get', 'picker:done']);
+const CHANNELS = new Set(['settings:get', 'settings:save', 'settings:reload', 'settings:quit', 'settings:logs', 'picker:get', 'picker:done']);
 
 contextBridge.exposeInMainWorld('ultrapos', {
   invoke(channel, ...args) {

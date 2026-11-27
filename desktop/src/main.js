@@ -21,10 +21,15 @@ const { createStore } = require('./settings');
 const { secondScreenUrlFor, sameOrigin } = require('./urls');
 const { createBridge } = require('./bridge');
 const { createBackend } = require('./printers');
+const { createLog } = require('./log');
 
 if (process.env.ULTRAPOS_USER_DATA) app.setPath('userData', process.env.ULTRAPOS_USER_DATA);
 // Order sounds and the customer screen's videos play without a click first.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
+const log = createLog(app.getPath('logs'));
+process.on('uncaughtException', (e) => log.error(`app error: ${(e && e.stack) || e}`));
+process.on('unhandledRejection', (e) => log.error(`app error (promise): ${(e && e.stack) || e}`));
 
 const PAGES = path.join(__dirname, 'pages');
 const ICON = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -66,9 +71,11 @@ function attachOfflineFallback(win, mode) {
   win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     // -3 = aborted (a newer navigation took over), not a failure.
     if (!isMainFrame || code === -3 || !/^https?:/i.test(url)) return;
+    log.info(`${mode}: couldn't load ${url} (${code} ${desc}), showing the offline page`);
     win.loadFile(path.join(PAGES, 'offline.html'), { query: { url, mode, reason: desc } });
   });
   win.webContents.on('render-process-gone', (_e, details) => {
+    log.error(`${mode}: page stopped (${details.reason}, exit ${details.exitCode}), reloading`);
     if (details.reason !== 'clean-exit' && alive(win)) win.webContents.reload();
   });
 }
@@ -245,7 +252,7 @@ const fromSettings = (e) => alive(settingsWin) && e.sender === settingsWin.webCo
 ipcMain.on('open-settings', (e) => { if (alive(cashier) && e.sender === cashier.webContents) openSettings(); });
 ipcMain.handle('settings:get', (e) => {
   if (!fromSettings(e)) return null;
-  return { ...settings(), effectiveCustomerUrl: effectiveCustomerUrl(), customerDisplays: customerDisplay() ? 1 : 0 };
+  return { ...settings(), effectiveCustomerUrl: effectiveCustomerUrl(), customerDisplays: customerDisplay() ? 1 : 0, version: app.getVersion() };
 });
 ipcMain.handle('settings:save', (e, patch) => {
   if (!fromSettings(e) || !patch || typeof patch !== 'object') return false;
@@ -264,6 +271,7 @@ ipcMain.handle('settings:save', (e, patch) => {
 });
 ipcMain.handle('settings:reload', (e) => { if (fromSettings(e)) reloadBothScreens(); return true; });
 ipcMain.handle('settings:quit', (e) => { if (fromSettings(e)) app.quit(); return true; });
+ipcMain.handle('settings:logs', async (e) => { if (fromSettings(e)) { log.info('log folder opened'); await shell.openPath(log.dir); } return true; });
 
 // ------------------------------------------------------------------ printer picker
 
@@ -317,6 +325,7 @@ ipcMain.on('native-call', async (e, id, method, argsJson) => {
   const reply = sameOrigin(frameUrl, settings().main_url)
     ? await bridge.call(method, argsJson)
     : { ok: false, json: JSON.stringify({ code: 'denied', message: 'Printing is only available to the cashier site.' }) };
+  if (!reply.ok) log.error(`printer ${method}: ${reply.json}`);
   if (wc.isDestroyed()) return;
   const js = `window.__ultraposNative&&window.__ultraposNative.resolve(${JSON.stringify(String(id))},${reply.ok ? 'true' : 'false'},${JSON.stringify(reply.json)})`;
   wc.executeJavaScript(js, true).catch(() => {});
@@ -326,6 +335,7 @@ ipcMain.on('native-call', async (e, id, method, argsJson) => {
 
 function start() {
   store = createStore(app.getPath('userData'));
+  log.info(`started ${app.getVersion()} on ${process.platform} ${require('os').release()}, ${screen.getAllDisplays().length} monitor(s)`);
   bridge = createBridge(
     createBackend({
       getPrinters: () => (alive(cashier) ? cashier.webContents.getPrintersAsync() : Promise.resolve([])),

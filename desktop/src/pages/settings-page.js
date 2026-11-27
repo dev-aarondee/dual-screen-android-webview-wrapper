@@ -9,6 +9,7 @@ async function init() {
   $('fullscreen').checked = s.fullscreen;
   $('now').textContent = `Customer screen now: ${s.effectiveCustomerUrl || '(black until a store opens)'}`;
   $('displays').textContent = `Customer displays found: ${s.customerDisplays}`;
+  $('version').textContent = `Ultra POS for Windows ${s.version}`;
   $('main').focus();
   $('main').select();
 }
@@ -25,6 +26,7 @@ $('form').addEventListener('submit', (e) => {
 $('reload').addEventListener('click', () => window.ultrapos.invoke('settings:reload').then(() => window.close()));
 $('cancel').addEventListener('click', () => window.close());
 $('quit').addEventListener('click', () => window.ultrapos.invoke('settings:quit'));
+$('logs').addEventListener('click', () => window.ultrapos.invoke('settings:logs'));
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.close(); });
 
 init();
