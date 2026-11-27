@@ -1,0 +1,19 @@
+{
+  "name": "ultrapos-desktop",
+  "productName": "Ultra POS",
+  "version": "1.0.0",
+  "description": "Ultra POS for Windows: the cashier screen, the customer display on a second monitor, and receipt printing through the printer's own Windows driver.",
+  "main": "src/main.js",
+  "private": true,
+  "author": "Ultra POS",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist:win": "electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "^26.15.3"
+  }
+}

@@ -22,6 +22,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -305,7 +306,7 @@ class MainActivity : ComponentActivity() {
             }
             // Build the WebView with the Presentation's context so it gets the
             // customer screen's size and density, not the cashier screen's.
-            val view = createWebView(context)
+            val view = createWebView(context, customerScreen = true)
             webView = view
             setContentView(view)
             window?.let { hideSystemBars(it, view) }
@@ -365,6 +366,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(
         context: Context,
+        customerScreen: Boolean = false,
         onUrlChanged: ((String) -> Unit)? = null,
     ): WebView = WebView(context).apply {
         layoutParams = ViewGroup.LayoutParams(
@@ -403,6 +405,16 @@ class MainActivity : ComponentActivity() {
             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
                 if (url != null) onUrlChanged?.invoke(url)
+            }
+
+            // First start with no internet: nothing of the POS is saved yet, so say so and
+            // retry by itself. Once it has loaded once, the web app's own offline copy opens.
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                super.onReceivedError(view, request, error)
+                val url = request.url?.toString() ?: return
+                if (!request.isForMainFrame || !url.startsWith("http")) return
+                Log.w(TAG, "Could not load $url: ${error.errorCode} ${error.description}")
+                view.loadDataWithBaseURL(null, offlinePageHtml(url, customerScreen), "text/html", "utf-8", null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -475,6 +487,48 @@ class MainActivity : ComponentActivity() {
         private const val HOTSPOT_WINDOW_MS = 3_000L
 
         private const val BLANK_PAGE = "<html><body style=\"margin:0;background:#000\"></body></html>"
+
+        /** A JS string literal that is also safe inside an HTML <script>. */
+        fun jsString(s: String): String = buildString {
+            append('"')
+            for (c in s) {
+                if (c.isLetterOrDigit() && c.code < 128 || c in ":/.?=-_~#%+,;@!*()[]$") append(c)
+                else append("\\u%04x".format(c.code))
+            }
+            append('"')
+        }
+
+        /**
+         * Shown when the POS can't load and nothing is saved on the terminal yet. It opens
+         * [url] by itself once the connection is back. The customer screen gets a quiet line.
+         */
+        fun offlinePageHtml(url: String, customerScreen: Boolean): String {
+            val body = if (customerScreen) {
+                "<h1 class=\"quiet\">Waiting for the internet…</h1>"
+            } else {
+                "<h1>Please connect to the internet</h1>" +
+                    "<p>Ultra POS needs the internet once to download your store's data. " +
+                    "After that it keeps working even when the internet is down.</p>" +
+                    "<p>Check the Wi-Fi or network cable. This screen opens the POS by itself " +
+                    "as soon as the connection is back.</p>" +
+                    "<button onclick=\"retry()\">Try again</button>"
+            }
+            return """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{margin:0;height:100%;background:#0b0b0c;color:#f2f2f2;font:16px/1.5 sans-serif}
+.w{height:100%;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;text-align:center}
+.c{max-width:520px}h1{font-size:24px;margin:0 0 12px}p{margin:0 0 12px;color:#c9c9cc}
+h1.quiet{font-size:18px;font-weight:400;color:#8a8a8e}
+button{margin-top:12px;font:inherit;font-weight:600;padding:12px 28px;min-height:48px;border-radius:8px;border:0;background:#2563eb;color:#fff}
+</style></head><body><div class="w"><div class="c">$body</div></div>
+<script>
+var target=${jsString(url)};
+function retry(){location.replace(target);}
+window.addEventListener('online',function(){setTimeout(retry,1000);});
+setInterval(function(){if(navigator.onLine)retry();},15000);
+</script></body></html>"""
+        }
 
         /**
          * Adds a scheme when someone pastes a bare host: https:// for "system.caltiger.ai",

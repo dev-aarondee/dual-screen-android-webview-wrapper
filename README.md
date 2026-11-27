@@ -83,6 +83,32 @@ existing **Bluetooth** and **USB** printer settings and every print button keep 
 - If the built-in printer doesn't show in the USB list, it is wired as a serial port, not USB, and
   needs the terminal maker's printer SDK. Tell us the model.
 
+## No internet
+
+The POS web app keeps its own offline copy, so once it has opened one time it works offline. On a
+first start with no internet (nothing saved yet), both apps show **Please connect to the internet**
+and open the POS by themselves as soon as the connection is back.
+
+## Windows PC app (`desktop/`)
+
+The same app for a Windows PC: **UltraPOS-Setup-x.y.z.exe** from the
+[Releases](../../releases) page (tags `desktop-v*`). Windows may say "Windows protected your PC"
+because the installer isn't code-signed yet: click **More info → Run anyway**.
+
+- The cashier screen opens on the main monitor. The customer display opens full screen on the
+  second monitor, following the cashier's store, the same as the terminal.
+- Tap or click the top-left corner 5 times, or press **Ctrl+Shift+U**, for **Screen URLs**,
+  *Open when this computer starts*, full screen and **Quit**. Keys: **F11** full screen,
+  **F5** reload.
+- Printing uses the same `window.UltraPOSNative` bridge. In the POS, the **USB** method lists the
+  printers installed in Windows and sends receipts through the printer's own driver, so the
+  driver stays and other apps can still print. The **Bluetooth** method lists paired Bluetooth
+  printers (their COM port) and installed printers. Never replace the printer's driver (for
+  example with Zadig).
+- Build: push a change under `desktop/` and the **Build Windows app** workflow uploads the
+  `ultrapos-windows` artifact. Local run: `cd desktop && npm install && npm start`; tests:
+  `npm test`.
+
 ## Troubleshooting
 
 - **The customer screen mirrors the cashier screen.** The app found no presentation display. The URL

@@ -11,8 +11,8 @@ android {
         applicationId = "com.pos.dualscreen"
         minSdk = 30 // Android 11 (OJ-D3 ships Android 11–14)
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.0.6"
+        versionCode = 8
+        versionName = "1.0.7"
     }
 
     // One fixed key (GitHub secrets → env in CI) so every build installs over the last one.

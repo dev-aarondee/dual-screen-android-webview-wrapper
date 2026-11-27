@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Ultra POS</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0b0c; color: #f2f2f2; font: 16px/1.5 "Segoe UI", system-ui, sans-serif; }
+  .wrap { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; text-align: center; }
+  .card { max-width: 520px; }
+  h1 { font-size: 26px; margin: 0 0 12px; }
+  p { margin: 0 0 12px; color: #c9c9cc; }
+  button { margin-top: 12px; font: inherit; font-weight: 600; padding: 12px 28px; min-height: 48px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; cursor: pointer; }
+  small { display: block; margin-top: 18px; color: #8a8a8e; word-break: break-all; }
+  body.customer .card > :not(h1) { display: none; }
+  body.customer h1 { font-size: 20px; color: #8a8a8e; font-weight: 400; }
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card">
+  <h1 id="title">Please connect to the internet</h1>
+  <p id="body">Ultra POS needs the internet once to download your store's data. After that it keeps working even when the internet is down.</p>
+  <p id="hint">Check the Wi-Fi or network cable. This screen will open the POS by itself as soon as the connection is back.</p>
+  <button id="retry" type="button">Try again</button>
+  <small id="where"></small>
+</div></div>
+<script src="offline-page.js"></script>
+</body>
+</html>
