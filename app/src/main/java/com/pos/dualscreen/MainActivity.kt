@@ -22,6 +22,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -55,6 +56,9 @@ class MainActivity : ComponentActivity() {
     private var overlayPromptShown = false
     private var urlDialog: AlertDialog? = null
     private var autoCustomerUrl: String? = null
+    private var lastCashierUrl: String? = null
+    /** True while the cashier screen is visible; the customer screen only shows then. */
+    private var inForeground = false
 
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -81,17 +85,16 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 
-        mainWebView = createWebView(this) { url -> onCashierUrlChanged(url) }
+        mainWebView = createCashierWebView()
         // Bluetooth/USB receipt printing (WebView has no Web Bluetooth or WebUSB).
         printerBridge = NativePrinterBridge(this) { mainUrl() }.also { it.attach(mainWebView) }
         setContentView(mainWebView)
         enterImmersive()
 
-        if (savedInstanceState != null) {
-            mainWebView.restoreState(savedInstanceState)
-        } else {
-            mainWebView.loadUrl(mainUrl())
-        }
+        // After Android recreates the app, load the page the cashier was on. (WebView.restoreState
+        // can leave a blank white page, since it no longer restores what was on screen.)
+        val savedUrl = savedInstanceState?.getString(STATE_CASHIER_URL)?.takeIf { it.startsWith("http") }
+        mainWebView.loadUrl(savedUrl ?: mainUrl())
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -104,6 +107,20 @@ class MainActivity : ComponentActivity() {
         displayManager.registerDisplayListener(displayListener, mainHandler)
     }
 
+    override fun onStart() {
+        super.onStart()
+        inForeground = true
+        refreshPresentation()
+    }
+
+    override fun onStop() {
+        // The cashier left the app (Home, recents, another app, screen off): close the customer
+        // screen too, so it never shows a stale cart. It comes back in onStart.
+        inForeground = false
+        dismissPresentation()
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         enterImmersive()
@@ -114,7 +131,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         mainWebView.onPause()
-        // The customer WebView is left running so the rear screen stays live.
         CookieManager.getInstance().flush()
         super.onPause()
     }
@@ -126,7 +142,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        mainWebView.saveState(outState)
+        (mainWebView.url ?: lastCashierUrl)?.takeIf { it.startsWith("http") }
+            ?.let { outState.putString(STATE_CASHIER_URL, it) }
     }
 
     override fun onDestroy() {
@@ -221,6 +238,7 @@ class MainActivity : ComponentActivity() {
      * (myenterprisex SecondScreenPage, fed by the cashier tab through shared localStorage).
      */
     private fun onCashierUrlChanged(url: String) {
+        if (url.startsWith("http")) lastCashierUrl = url
         val derived = secondScreenUrlFor(url) ?: return
         if (derived == autoCustomerUrl) return
         autoCustomerUrl = derived
@@ -237,6 +255,10 @@ class MainActivity : ComponentActivity() {
     /** Shows, moves or removes the customer Presentation to match the connected displays. */
     private fun refreshPresentation() {
         if (isFinishing || isDestroyed) return
+        if (!inForeground) {
+            dismissPresentation()
+            return
+        }
         val target = presentationDisplays().firstOrNull()
         val current = customerPresentation
 
@@ -252,8 +274,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showPresentation(display: Display): CustomerPresentation? {
-        // With "Display over other apps" granted, an overlay window survives the activity
-        // being backgrounded and is more reliable on Rockchip firmware. Fall back to a plain
+        // With "Display over other apps" granted, the overlay window type is more reliable on
+        // Rockchip firmware. (It is still closed whenever the cashier leaves the app.) Fall back to a plain
         // Presentation if the firmware rejects the overlay type.
         val useOverlay = Settings.canDrawOverlays(this)
         return try {
@@ -306,7 +328,15 @@ class MainActivity : ComponentActivity() {
             }
             // Build the WebView with the Presentation's context so it gets the
             // customer screen's size and density, not the cashier screen's.
-            val view = createWebView(context, customerScreen = true)
+            val view = createWebView(context, customerScreen = true, onGone = {
+                // The page's renderer died: start the customer screen over instead of a white screen.
+                mainHandler.post {
+                    if (customerPresentation === this@CustomerPresentation) {
+                        dismissPresentation()
+                        refreshPresentation()
+                    }
+                }
+            })
             webView = view
             setContentView(view)
             window?.let { hideSystemBars(it, view) }
@@ -363,10 +393,32 @@ class MainActivity : ComponentActivity() {
 
     // ---------------------------------------------------------------- WebView setup
 
+    private fun createCashierWebView(): WebView =
+        createWebView(this, onGone = { mainHandler.post { recoverCashier() } }) { url -> onCashierUrlChanged(url) }
+
+    /**
+     * The cashier page's renderer died (crash, or Android reclaimed it while the app was in the
+     * background). Without this the WebView stays white, or the whole app is killed. Build a
+     * fresh WebView and reopen the page the cashier was on; the POS keeps its own offline data.
+     */
+    private fun recoverCashier() {
+        if (isFinishing || isDestroyed) return
+        val url = lastCashierUrl ?: mainUrl()
+        Log.w(TAG, "Cashier page stopped; reopening $url")
+        val old = mainWebView
+        mainWebView = createCashierWebView()
+        printerBridge?.attach(mainWebView)
+        setContentView(mainWebView)
+        enterImmersive()
+        destroyWebView(old)
+        mainWebView.loadUrl(url)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(
         context: Context,
         customerScreen: Boolean = false,
+        onGone: (() -> Unit)? = null,
         onUrlChanged: ((String) -> Unit)? = null,
     ): WebView = WebView(context).apply {
         layoutParams = ViewGroup.LayoutParams(
@@ -415,6 +467,13 @@ class MainActivity : ComponentActivity() {
                 if (!request.isForMainFrame || !url.startsWith("http")) return
                 Log.w(TAG, "Could not load $url: ${error.errorCode} ${error.description}")
                 view.loadDataWithBaseURL(null, offlinePageHtml(url, customerScreen), "text/html", "utf-8", null)
+            }
+
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                Log.w(TAG, "WebView renderer gone (crashed=${detail.didCrash()}, customer=$customerScreen)")
+                val recover = onGone ?: return false
+                recover()
+                return true
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -486,6 +545,7 @@ class MainActivity : ComponentActivity() {
         private const val HOTSPOT_TAPS = 5
         private const val HOTSPOT_WINDOW_MS = 3_000L
 
+        private const val STATE_CASHIER_URL = "cashier_url"
         private const val BLANK_PAGE = "<html><body style=\"margin:0;background:#000\"></body></html>"
 
         /** A JS string literal that is also safe inside an HTML <script>. */
